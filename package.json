@@ -1,0 +1,19 @@
+{
+  "name": "aws_typescript",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.119",
+    "serverless-offline": "^12.0.4",
+    "serverless-plugin-typescript": "^2.1.5"
+  },
+  "scripts": {
+    "build": "npx tsc",
+    "start:dev": "sls offline",
+    "deploy:stage": "sls deploy --stage STAGE"
+  },
+  "keywords": [],
+  "author": "rustamrv",
+  "license": "ISC"
+}
