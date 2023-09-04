@@ -3,12 +3,15 @@ import {
   APIGatewayProxyResult,
   Context,
   Handler,
+  SNSEvent,
 } from "aws-lambda";
 import { connectDb } from "./db";
 import { UserModel } from "./models";
 import * as bcrypt from "bcrypt";
+import { SNS } from "aws-sdk";
+import { env } from "node:process";
 
-const userCreate: Handler = async (
+const register: Handler = async (
   event: APIGatewayProxyEvent,
   context: Context,
 ): Promise<APIGatewayProxyResult> => {
@@ -32,6 +35,15 @@ const userCreate: Handler = async (
 
     const user = await userModel.create(body);
 
+    const sns = new SNS();
+
+    const params = {
+      Message: JSON.stringify({email: user.email}),
+      TopicArn: `arn:aws:sns:us-east-1:${env.ACCOUNT_ID}:sendVerifyAccount`
+    };
+
+    await sns.publish(params).promise();
+
     const response: APIGatewayProxyResult = {
       statusCode: 200,
       body: JSON.stringify({
@@ -49,4 +61,36 @@ const userCreate: Handler = async (
     return response;
   }
 };
-export { userCreate };
+
+const sendVerifyAccount: Handler = async (
+  event: SNSEvent,
+  context: Context,
+): Promise<APIGatewayProxyResult> => {
+  try {
+    console.log('there');
+    
+    // await connectDb();
+    for (const record of event.Records) {
+      const snsMessage = JSON.parse(record.Sns.Message);
+ 
+      console.log("Email sent to:", snsMessage);
+    }
+    const response: APIGatewayProxyResult = {
+      statusCode: 200,
+      body: JSON.stringify({
+        message: "Ok",
+      }),
+    };
+    return response;
+  } catch (error: any) {
+    const response: APIGatewayProxyResult = {
+      statusCode: 400,
+      body: JSON.stringify({
+        message: error.message,
+      }),
+    };
+    return response;
+  }
+};
+
+export { register, sendVerifyAccount };
