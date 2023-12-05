@@ -1,67 +1,146 @@
-  service: aws-typescript
-  frameworkVersion: "3"
+service: aws-typescript
+frameworkVersion: "3"
 
-  provider:
-    name: aws
-    runtime: nodejs18.x
-    stage: ${opt:stage, 'dev'} 
-    region: us-east-1
+provider:
+  name: aws
+  runtime: nodejs18.x
+  stage: ${opt:stage, 'dev'} 
+  region: us-east-1
       
-    iamRoleStatements:
-      - Effect: "Allow"
-        Resource: "*"
-        Action:
-          - "sns:*"
-    environment:
-      accountId: '#{AWS::AccountId}'
+  iamRoleStatements:
+    - Effect: "Allow"
+      Resource: "*"
+      Action:
+        - "sns:*"
+        - "lambda:InvokeFunction"
+    - Effect: "Allow"
+      Action:
+        - "lambda:InvokeFunction"
+      Resource:
+        - Fn::Join:
+          - ":"
+          - - "arn:aws:lambda"
+            - Ref: AWS::Region
+            - Ref: AWS::AccountId
+            - Fn::Join:
+              - ""
+              - - "function:"
+                - Ref: AWS::StackName
+                - "-sendVerifyAccount"
+    - Effect: "Allow"
+      Action:
+        - "ec2:CreateNetworkInterface"
+        - "ec2:DescribeNetworkInterfaces"
+        - "ec2:DeleteNetworkInterface"
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - "secretsmanager:GetSecretValue"
+      Resource: "arn:aws:secretsmanager:your-region:your-account-id:secret:your-mongodb-secret/*"
 
-  plugins:
-    - serverless-plugin-typescript
-    - serverless-offline
+plugins:
+  - serverless-plugin-typescript
+  - serverless-offline
 
-  package:
-    exclude:
-      - node_modules/**/*
-    include:
-      src/handler.ts
+package:
+  exclude:
+    - node_modules/**/*
+  include:
+    - src/handler.ts
+    - node_modules/**/*
 
-  functions:
-    register:
-      handler: src/handler.register
-      events:
-        - http:
-            path: /auth/register
-            method: POST
-            onSuccess: sendVerifyAccount
-
+functions:
+  register:
+    handler: src/handler.register
+    events:
+      - http:
+          path: /api/register
+          method: POST
   sendVerifyAccount:
     handler: src/handler.sendVerifyAccount
     events:
-      - sns: sendVerifyAccount
+      - sns: SendVerifyTopic
+  confirmEmail:
+    handler: src/handler.confirmEmail
+    events:
+      - http:
+          path: /api/confirm-email
+          method: GET
 
-  resources: 
-    Conditions:
-      ShouldCreateResources: !Equals [!Ref SendVerifyTopic, !Sub "arn:aws:sns:us-east-1:${AWS::AccountId}:sendVerifyAccount"]
-      
-    Resources:
-      SendVerifyTopic:
-        Type: AWS::SNS::Topic 
-        Condition: ShouldCreateResources
-        Properties:
-          DisplayName: VerifyAccount
-          TopicName: sendVerifyAccount
+resources: 
+  Resources:
+    SendVerifyTopic:
+      Type: AWS::SNS::Topic  
+      Properties:
+        DisplayName: VerifyAccount
+        TopicName: email-verify-${self:provider.stage}
 
-      SendVerifyQueue:
-        Type: AWS::SQS::Queue
-        Condition: ShouldCreateResources
-        Properties:
-          QueueName: my-sqs-queue
+    SendVerifyQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: my-sqs-queue-${self:provider.stage}
 
-      VerifyTopicSubscription:
-        Type: AWS::SNS::Subscription
-        Condition: ShouldCreateResources
-        Properties:
-          Protocol: sqs
-          TopicArn: !Ref SendVerifyTopic
-          Endpoint:
-            Fn::GetAtt: [SendVerifyQueue, Arn]
+    VerifyTopicSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Protocol: lambda
+        TopicArn:
+          Ref: SendVerifyTopic
+        Endpoint:
+          Fn::GetAtt:
+            - SendVerifyAccountLambdaFunction
+            - Arn
+
+    SendVerifyAccountLambdaFunction:
+      Type: AWS::Lambda::Function
+      Properties:
+        FunctionName: sendVerifyAccount-${self:provider.stage}
+        Runtime: nodejs18.x
+        Handler: src/handler.sendVerifyAccount
+        MemorySize: 128
+        Timeout: 30
+        Environment:
+          Variables:
+            ENV_VAR_NAME: value
+        Role:
+          Fn::GetAtt:
+            - LambdaExecutionRole
+            - Arn
+
+    LambdaExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: [lambda.amazonaws.com]
+              Action: ['sts:AssumeRole']
+        Policies:
+          - PolicyName: LambdaExecutionPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource: 'arn:aws:logs:*:*:*'
+                - Effect: Allow
+                  Action:
+                    - sns:Publish
+                  Resource: 
+                    Ref: SendVerifyTopic
+                # Добавленные политики для доступа к MongoDB
+                - Effect: Allow
+                  Action:
+                    - ec2:CreateNetworkInterface
+                    - ec2:DescribeNetworkInterfaces
+                    - ec2:DeleteNetworkInterface
+                  Resource: '*'
+                - Effect: Allow
+                  Action:
+                    - secretsmanager:GetSecretValue
+                  Resource: 'arn:aws:secretsmanager:your-region:your-account-id:secret:your-mongodb-secret/*'
